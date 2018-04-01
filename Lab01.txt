@@ -1,0 +1,109 @@
+Lab01-调试linux操作系统
+
+使用工具：Linux-4,15.14内核，gdb，qemu
+
+环境：win10下虚拟机ubuntu-16.04.3系统
+
+实验步骤：
+1、安装vmware12虚拟机，下载ubuntu镜像创建虚拟机，进行一系列初始化操作，开机设定，安装vmware-tools，通过命令行安装git最新版本，按仓库中url进行git clone,在里面touch一个hello_linux.sh可执行文件，修改访问权限，依次git add,git commit -m,git push添加到仓库中。
+
+2、在虚拟机中下载linux内核，输入tar -xzvf linux.4.15.14.tar.gz解压。进入解压的文件夹，输入指令 sudo make menuconfig，配置内核，修改一些选项，再使用apt下载一些依赖项，进入文件输入sudo make,开始编译，第一次由于分配空间不足，两小时后失败，之后通过各种查询，又分配四十G存储空间，并挂载到原来的分区下（中间用了fdisk,fd,mount格式化等），重新编译，三小时后编译完成。
+
+3、使用sudo apt-get install qemu安装qemu，之后再从网站 http://www.gnu.org/software/gdb/download/下载gdb源码,解压，再按照网上修改源代码，将remote函数修改，将
+if (buf_len > 2 * rsa->sizeof_g_packet)
+error (_("Remote 'g' packet reply is too long: %s"), rs->buf);
+改为
+if (buf_len > 2 * rsa->sizeof_g_packet) {
+    rsa->sizeof_g_packet = buf_len;
+    for (i = 0; i < gdbarch_num_regs (gdbarch); i++)
+    {
+        if (rsa->regs[i].pnum == -1)
+            continue;
+        if (rsa->regs[i].offset >= rsa->sizeof_g_packet)
+            rsa->regs[i].in_g_packet = 0;
+        else
+            rsa->regs[i].in_g_packet = 1;
+    }
+}
+之后开始编译，等待一段时间安装成功。
+
+4、在linux-4.15.14文件夹中输入qemu-system-x86_64 -kernel arch/x86/boot/bzImage -initrd ./initrd.img-4.15.14 -smp 2 -S，在qemu中进入控制台，再进行一些输入修改，最后就可以正常使用了。
+
+5、接下来用gdb进行调试。
+
+1、start_kernel()的执行
+  该函数是linux转换为平台无关代码阶段执行的第一个c语言函数，在执行start_kernel时，期初会对CPU、内存等各种硬件设备进行初始化，这期间涉及到非常多的不同内核模块的加载。
+设置断点，可以看到初始寄存器的状态：
+rax            0x0	0
+rbx            0x0	0
+rcx            0x0	0
+rdx            0x0	0
+rsi            0x2828350d	673723661
+rdi            0x14650	83536
+rbp            0x0	0x0 <irq_stack_union>
+rsp            0xffffffff82003f50	0xffffffff82003f50 <init_thread_union+16208>
+r8             0xffffffff825a4000	-2108014592
+r9             0x8	8
+r10            0x14	20
+r11            0x10000e3	16777443
+r12            0x0	0
+r13            0x0	0
+r14            0x0	0
+r15            0x0	0
+rip            0xffffffff82538aee	0xffffffff82538aee <start_kernel>
+eflags         0x46	[ PF ZF ]
+cs             0x10	16
+ss             0x0	0
+ds             0x0	0
+es             0x0	0
+内部的执行过程大致如下，中间调用了很多不同的函数
+lockdep_init();
+set_task_stack_end_magic(&init_task); 
+init_task即手工创建的PCB，0号进程即最终的idle进程。
+smp_setup_processor_id();
+debug_objects_early_init();
+...
+trap_init();                          中断初始化向量
+mm_init();                            内存管理莫怪的初始化
+sched_init();                         进程调度初始化
+...
+rest_init();                          启动1号进程
+  init进程是第一个用户态进程，叫做”1号进程“，通过rest_init函数 -> kernel_init函数 -> run_init_process生成，找根目录下的程序来作为“1号进程”，当系统没有进程需要执行时就调度到idle进程。这就是“0号进程”，从系统启动之后就一直存在。它创建了1号进程“kernel_init”和其他进程，这样系统就启动起来了。
+
+2、rest_init()的执行
+在start_kernel的最后一项初始化，就是有关内核进程管理的初始化了。一旦这一项初始化完成，内核就加载成功了。
+源代码如下：
+static noinline void __init_refok rest_init(void)
+{
+
+int pid;
+rcu_scheduler_starting();
+/*
+ * We need to spawn init first so that it obtains pid 1, however
+ * the init task will end up wanting to create kthreads, which, if
+ * we schedule it before we create kthreadd, will OOPS.
+ */
+kernel_thread(kernel_init, NULL, CLONE_FS);
+numa_default_policy();
+pid = kernel_thread(kthreadd, NULL, CLONE_FS | CLONE_FILES);
+rcu_read_lock();
+kthreadd_task = find_task_by_pid_ns(pid, &init_pid_ns);
+rcu_read_unlock();
+complete(&kthreadd_done);
+
+/*
+ * The boot idle thread must execute schedule()
+ * at least once to get things moving:
+ */
+init_idle_bootup_task(current);
+schedule_preempt_disabled();
+/* Call into cpu_idle with preempt disabled */
+cpu_startup_entry(CPUHP_ONLINE);
+}
+其中pid = kernel_thread(kernel_init, NULL, CLONE_FS)创建kernel_init内核线程，即1号进程，但是在kthreadd后运行。
+在pid = kernel_thread(kthreadd, NULL, CLONE_FS | CLONE_FILES)中创建kthreadd内核线程，2号进程，用于管理和调度其它内核线程。
+complete(&kthreadd_done)通知kernel_init进程kthreadd进程已创建完成。
+最后的函数cpu_startup_entry(CPUHP_ONLINE)会调用cpu_idle_loop(), cpu_idle_loop()里面有个while(1)的循环，作为idle进程，pid = 0，在系统没有任何需要执行的进程时调度到此进程。 
+到此操作系统就运行起来了。
+6、总结
+通过这次实验从0开始初步认识linux操作系统，没有基础开始既痛苦又在结束后感觉很有收获。
