@@ -38,7 +38,8 @@ if (buf_len > 2 * rsa->sizeof_g_packet) {
 5、接下来用gdb进行调试。
 
 1、start_kernel()的执行
-  该函数是linux转换为平台无关代码阶段执行的第一个c语言函数，在执行start_kernel时，期初会对CPU、内存等各种硬件设备进行初始化，这期间涉及到非常多的不同内核模块的加载。
+  该函数是linux转换为平台无关代码阶段执行的第一个c语言函数，在执行start_kernel时，期初会对CPU、内存等各种硬件设备进行初始化，这
+  期间涉及到非常多的不同内核模块的加载。
 设置断点，可以看到初始寄存器的状态：
 rax            0x0	0
 rbx            0x0	0
@@ -74,7 +75,9 @@ mm_init();                            内存管理莫怪的初始化
 sched_init();                         进程调度初始化
 ...
 rest_init();                          启动1号进程
-  init进程是第一个用户态进程，叫做”1号进程“，通过rest_init函数 -> kernel_init函数 -> run_init_process生成，找根目录下的程序来作为“1号进程”，当系统没有进程需要执行时就调度到idle进程。这就是“0号进程”，从系统启动之后就一直存在。它创建了1号进程“kernel_init”和其他进程，这样系统就启动起来了。
+  init进程是第一个用户态进程，叫做”1号进程“，通过rest_init函数 -> kernel_init函数 -> run_init_process生成，找根目录下的
+程序来作为“1号进程”，当系统没有进程需要执行时就调度到idle进程。这就是“0号进程”，从系统启动之后就一直存在。它创建了1号进程“kernel_init”
+和其他进程，这样系统就启动起来了。
 
 2、rest_init()的执行
 在start_kernel的最后一项初始化，就是有关内核进程管理的初始化了。一旦这一项初始化完成，内核就加载成功了。
@@ -109,7 +112,8 @@ cpu_startup_entry(CPUHP_ONLINE);
 其中pid = kernel_thread(kernel_init, NULL, CLONE_FS)创建kernel_init内核线程，即1号进程，但是在kthreadd后运行。
 在pid = kernel_thread(kthreadd, NULL, CLONE_FS | CLONE_FILES)中创建kthreadd内核线程，2号进程，用于管理和调度其它内核线程。
 complete(&kthreadd_done)通知kernel_init进程kthreadd进程已创建完成。
-最后的函数cpu_startup_entry(CPUHP_ONLINE)会调用cpu_idle_loop(), cpu_idle_loop()里面有个while(1)的循环，作为idle进程，pid = 0，在系统没有任何需要执行的进程时调度到此进程。 
+最后的函数cpu_startup_entry(CPUHP_ONLINE)会调用cpu_idle_loop(), cpu_idle_loop()里面有个while(1)的循环，作为idle进程，pid = 0，
+在系统没有任何需要执行的进程时调度到此进程。 
 到此操作系统就运行起来了。
 6、总结
 通过这次实验从0开始初步认识linux操作系统，没有基础开始既痛苦又在结束后感觉很有收获。
